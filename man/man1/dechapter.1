@@ -1,0 +1,303 @@
+.TH DECHAPTER 1 2025-04-05 "DECHAPTER 0.1.0"
+.
+.SH NAME
+.P
+dechapter \- losslessly merge chaptered video footage
+.
+.SH SYNOPSIS
+.
+.SY dechapter
+[<options>] [<file|dir> ...]
+.YS
+.
+.SH DESCRIPTION
+.P
+Some cameras split their video recordings into chunks known as chapters to mitigate data corruption or due to file system limitations. \%\fBdechapter\fR losslessly joins those chunks into single continuous video files.
+.P
+\%\fBdechapter\fR is preconfigured to recognize recordings that follow the file naming conventions used by GoPro cameras. The user may also add their own filename patterns to accomodate other cameras and manufacturers.
+.
+.SH NON-OPTIONS
+.
+.TP
+\%<file>
+An input file. Any files whose names don't match the naming patterns defined in \%\fBconf_filename_spec\fR are silently ignored.
+.
+.TP
+\%<dir>
+An input directory. Passing <dir> is the same as passing all files in <dir> and its subdirectories as non-option arguments. 
+.
+.SH OPTIONS
+.
+.TP
+.B \%-d,\ --dest-dir\fR=<value>
+A destination directory. If set to an empty string \%(''), the output files are placed in containing directories of the original files. The default value is \%''.
+.
+.TP
+.B \%--dest-dir-create\fR[={always|prompt|never}]
+Whether or not to create a destination directory if it does not exist.
+.
+.RS
+.TP 10
+[always]
+Create a destination directory.
+.TP
+prompt
+Ask if the user wants to create a destination directory. This is the default.
+.TP
+never
+Do not create a destination directory.
+.RE
+.
+.TP
+.B \%--dest-dir-no-create
+Do not create a destination directory if it does not exist. Equivalent to \%\fB--dest-dir-create\fR set to \%'never'.
+.
+.TP
+.B \%-o,\ --output\fR=<value>
+A string with placeholders that determines the names of the output files. If any forward slashes ('/') are found in this string, the part up until the last forward slash is considered a subdirectory prefix. Any subdirectories in that prefix will always be automatically created.
+.sp
+The default value is \%'%{name}-merged.mp4'.
+.sp
+The extension set in the value determines the output file's container format. For example, to use the Matroska container format, simply replace \%'.mp4' with \%'.mkv': \%'%{name}-merged.mkv'.
+.sp
+The following placeholders are supported:
+.
+.RS
+.TP
+%{name}
+The basename of the original first chapter file without the extension.
+.TP
+%{id}
+The recording id as it appears in the names of the original chaptered files.
+.TP
+%{date}
+Recording creation time as stored in the original files' metadata. See also \%\fB--date-format\fR.
+.TP
+%{s}
+The default or configured value of this option. Useful for adding a prefix to that value on the command line. For example, \%'CAM1-%s'.
+.sp
+This placeholder may not be used in the configuration file.
+.P
+See also PLACEHOLDER FORMAT.
+.RE
+.
+.TP
+.B \%--date-format\fR=<value>
+A date format string that determines how the value of the \%%{date} placeholder is formatted. See \%\fBdate\fR(1) for a full list of format sequences.
+.sp
+The default value is \%'%Y-%m-%d_%H-%M-%S'.
+.
+.TP
+.B \%-y[y],\ --overwrite\fR[={always|prompt|never}]
+Whether or not to overwrite already existing files whose names match the output file name.
+.
+.RS
+.TP 10
+\%\fB-yy\fR\ / \%always
+Overwrite already existing files.
+.TP
+\%\fB-y\fR\ / \%[prompt]
+Ask if the user wants to overwrite an already existing file. This is the default.
+.TP
+never
+Do not overwrite already existing files.
+.RE
+.
+.TP
+.B \%-Y,\ --no-overwrite\fR
+Do not overwrite already existing files. Equivalent to \%\fB-y[y],\ --overwrite\fR set to \%'never'.
+.
+.TP
+.B \%-x[x],\ --exec
+Execute commands (as opposed to performing a dry run for preview purposes). This is the default.
+.
+.RS
+.TP
+.B \%-x
+Perform the specified behavior of this option.
+.TP
+.B \%-xx
+In addition to performing the specified behavior of this option, flip the decision value of \%\fB--exec-print\fR.
+.RE
+.
+.TP
+.B \%-X[X],\ --no-exec
+Do not execute commands. Perform a dry run.
+.
+.RS
+.TP
+.B \%-X
+Perform the specified behavior of this option.
+.TP
+.B \%-XX
+In addition to performing the specified behavior of this option, flip the decision value of \%\fB--exec-print\fR.
+.
+.P
+Note: \%\fBffmpeg\fR's "File \%'file.mp4' already exists. Overwrite?" prompt is not simulated and \%\fB-y[y],\ --overwrite\fR has no effect when \%\fB--no-exec\fR is set. Instead, a simple message is shown if a file already exists.
+.RE
+.
+.TP
+.B \%--exec-print\fR[={always|auto|never}]
+Print commands and their arguments as they are being executed. The default value is \%'auto'.
+.
+.RS
+.TP 10
+[always]
+Always print commands.
+.TP
+auto
+Print commands only when performing a dry run (\%\fB--no-exec\fR).
+.TP
+never
+Never print commands.
+.
+.P
+\%\fB-xx\fR and \%\fB-XX\fR flip the decision value of this option. If this option is set to \%'auto', the decision is flipped. If this option is set to \%'always' or \%'never', the outcome is the opposite.
+.RE
+.
+.TP
+.B \%--exec-no-print\fR
+Do not print commands and their arguments as they are being executed. Equivalent to \%\fB--exec-print\fR set to \%'never'.
+.
+.TP
+.B \%--help
+Open the man page.
+.
+.TP
+.B \%--version
+Print version information.
+.
+.TP
+.B \%--config\fR[={edit|generate|remove|auto}]
+Perform an action on the configuration file. See also CONFIGURATION and FILES below.
+.
+.RS
+.TP
+edit
+Open an existing configuration file in a text editor.
+.TP
+generate
+Generate a new configuration file.
+.TP
+remove
+Delete an existing configuration file. If the configuration directory doesn't have any other files, it is also deleted.
+.TP
+[auto]
+Generate a configuration file if it does not exist. If it does, open it in a text editor. This is the default.
+.RE
+.
+.SH CONFIGURATION
+.P
+This is how command line options and configuration variables correspond to each other. The command line option on the left sets the variable(s) on the right internally.
+.P
+Special symbols in the right column:
+.
+.TP
+-
+This option is non-configurable.
+.TP
+"
+This option sets the same variable(s) as the one above.
+.
+.P
+.TS
+nokeep;
+lb lb .
+-d, --dest-dir\fR=<value>	opt_dest_dir
+--dest-dir-create\fR[=<value>]	opt_dest_dir_create
+--dest-dir-no-create	\fR"
+-o, --output	opt_output
+--date-format	opt_date_format
+-y[y], --overwrite\fR[=<value>]	opt_overwrite
+-Y, --no-overwrite	\fR"
+-x[x], --exec	opt_exec
+-X[X], --no-exec	\fR"
+--exec-print\fR[=<value>]	opt_exec_print
+--exec-no-print	\fR"
+--help	\fR-
+--version	\fR-
+--config\fR[=<value>]	\fR-
+.TE
+.
+.SS Configuration file-only parameters
+.
+.TP
+.B conf_default_nonopts\fR (indexed array)
+If no non-option arguments are passed, this value is used. Useful for setting default directories to scan for recordings.
+.sp
+See also NON-OPTIONS.
+.
+.TP
+.B conf_filename_spec\fR (indexed array)
+A filename format specification. It is used for identifying files as video recordings and locating chapters that belong to the same recording.
+.sp
+Values in this array are arranged in sets of three:
+.
+.RS
+.TP
+\%<name>
+A descriptive name. This name must be unique.
+.
+.TP
+\%<regex>
+A Bash regular expression to match the first chapter of a recording. Must include a single capture group that captures the recording id. A recording id is a string that can be found in the name of each chapter file that identifies those files as being parts of the same recording.
+.
+.TP
+\%<glob_format>
+A format string to \%\fBprintf\fR which, when processed, produces a Bash glob pattern to match all chapters of a given recording starting with the second chapter. This value must include a sigle '%s' which gets substituted with the recording id obtained from matching <regex>.
+.
+.P
+The sequence of these three elements may be repeated as many times as needed.
+.RE
+.
+.SH ENVIRONMENT
+.P
+The values of \%\fBVISUAL\fR and \%\fBEDITOR\fR environment variables determine the text editor when opening configuration files with \%\fB--config\fR.
+.P
+\%\fBVISUAL\fR is evaluated first. If that is not set, then \%\fBEDITOR\fR is evaluated. If neither is set, \%\fBnano\fR is used as the text editor.
+.
+.SH FILES
+.P
+A configuration file can be used to change the default behavior of \fBdechapter\fR. See CONFIGURATION above for more information.
+.P
+The location of the configuration file is \%"$XDG_CONFIG_HOME/\:dechapter/\:config.bash". If \%\fBXDG_CONFIG_HOME\fR is not set, it defaults to \%"$HOME/\:.config".
+.
+.SH PLACEHOLDER FORMAT
+.
+.TP
+(1)
+\%%<name>
+.sp
+or
+.TP
+.TP
+(2)
+\%%{<name>:-<fallback>:+<override>}
+.sp
+\%:-<fallback> and \%:+<override> are optional and may go in any order.
+.
+.P
+\%<name> is a placeholder name.
+.P
+\%<fallback> and \%<override> are also strings with placeholders just like the entire string.
+.P
+\%<fallback> is substituted if the replacement value is unavailable.
+.P
+\%<override> is substituted instead of the replacement value allowing to, for instance, insert extra characters next to it: \%'%{date:+%{date}_}%{name}.mp4'.
+.P
+In strings with placeholders, \%'\\', \%'%', \%'{', \%':', and \%'}' are special characters. They can be escaped with backslashes \%('\\') to represent their literal values.
+.RE
+.
+.SH AUTHOR
+.P
+Alex Rogers \%<https://github.com/\:linguisticmind>
+.
+.SH HOMEPAGE
+.P
+\%<https://github.com/\:linguisticmind/\:dechapter>
+.
+.SH COPYRIGHT
+.P
+Copyright © 2025 Alex Rogers. License GPLv3+: GNU GPL version 3 or later \%<https://gnu.org/\:licenses/\:gpl.html>.
+.P
+This is free software: you are free to change and redistribute it. There is NO WARRANTY, to the extent permitted by law.

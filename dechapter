@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+
+# dechapter - losslessly merge chaptered video footage
+# copyright (c) 2025  Alex Rogers (https://github.com/linguisticmind)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+declare -- version='0.1.0'
+
+declare -- script_source=$(realpath -- "${BASH_SOURCE[0]}")
+declare -- script_name="${script_source##*/}"
+declare -- config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"'/'"${script_source##*/}"
+declare -- script_dir="$(dirname -- "$script_source")"
+
+shopt -s extglob globstar nullglob
+
+function bat_or_cat { { type -P batcat || type -P bat; } > /dev/null && "$_" "$@" || cat; }
+
+function print_quot {
+  local -- glob='*[[:space:][:cntrl:]!"#$&'\''()*;<>?\[\\\]^`{|}~]*'
+  local -- i
+  for (( i = 1; i < $#; i++ )); do
+    [[ ${!i} == $glob ]] && printf '%s ' "${!i@Q}" || printf '%s ' "${!i}"
+  done
+  [[ ${!i} == $glob ]] && printf '%s\n' "${!i@Q}" || printf '%s\n' "${!i}"
+}
+
+function fstr {
+
+  { type -P lua5.4 || type -P lua; } &> /dev/null && "$_" <(printf '%s' '
+
+    if #arg == 0 then
+      io.stderr:write("fstr: fstr <str> [<name> <replacement> ...]\n")
+      io.stderr:write("version: 0.1.0\n")
+      os.exit(1)
+    end
+    
+    str, replacements = arg[1], {}
+    
+    for i = 2, #arg, 2 do replacements[arg[i]] =  arg[i + 1]:gsub("\\([\\%%:{}])", "%1") end
+    
+    function string:fstr_match()
+    
+      local name, fallback, override
+    
+      i, j = self:find("^%%[%w_]+")
+      if i == nil then i, j = self:find("[^\\]%%[%w_]+"); if i ~= nil then i = i + 1 end end
+    
+      if i ~= nil then name = self:sub(i + 1, j) else
+    
+        if i == nil then i, j = self:gsub("\\[{}]", "__"):find("^%%%b{}") end
+        if i == nil then i, j = self:gsub("\\[{}]", "__"):find("[^\\]%%%b{}"); if i ~= nil then i = i + 1 end end
+        
+        if i == nil then return false end
+    
+        local rest
+        name, rest = self:sub(i + 2, j - 1):match("([%w_]+)(.*)")
+    
+        repeat
+          local split = rest:find("[^\\]:")
+          if rest:sub(2, 2) == "-" then
+            fallback = rest:sub(3, split or #rest)
+          elseif rest:sub(2, 2) == "+" then
+            override = rest:sub(3, split or #rest)
+          end
+          if split ~= nil then rest = rest:sub(split + 1) else rest = "" end
+        until rest == ""
+    
+      end
+    
+      replacement = override or replacements[name] or fallback
+    
+      if replacement ~= nil then return true else
+        io.stderr:write("fstr: unable to replace %{" .. name .. "}\n")
+        os.exit(1)
+      end
+    
+    end
+    
+    while str:fstr_match() do
+      str = str:sub(1, i - 1) .. replacement .. str:sub(j + 1)
+    end
+    
+    str = str:gsub("\\([\\%%:{}])", "%1")
+    
+    print(str)
+
+  ') "$@"
+
+}
+
+declare -- opts
+opts=$(getopt -n "$script_name" -o 'd:,o:,y,Y,x,X,' -l 'dest-dir:,dest-dir-create::,dest-dir-no-create,output:,date-format:,overwrite::,no-overwrite,exec,no-exec,exec-print,exec-no-print,help,version,config::,' -- "$@") || exit 1
+eval set -- "$opts"
+unset -v opts
+
+# --- BEGIN config ---
+declare -a conf_default_nonopts=()
+declare -a conf_filename_spec=(
+
+  'gopro/classic'             'GOPR([0-9]{4})'   'GP[0-9][0-9]%s'
+                                           
+  'gopro/fusion/front'        'GPFR([0-9]{4})'   'GF[0-9][0-9]%s'
+  'gopro/fusion/back'         'GPBK([0-9]{4})'   'GB[0-9][0-9]%s'
+                                           
+  'gopro/max/360'             'GS01([0-9]{4})'   'GS@(0[2-9])|[1-9][0-9])%s'
+  'gopro/max/hero'            'GH01([0-9]{4})'   'GH@(0[2-9])|[1-9][0-9])%s'
+                                           
+  'gopro/modern/avc'          'GH01([0-9]{4})'   'GH@(0[2-9])|[1-9][0-9])%s'
+  'gopro/modern/hevc'         'GX01([0-9]{4})'   'GX@(0[2-9])|[1-9][0-9])%s'
+
+  'gopro/modern/looping/avc'  'GH([A-Z]{2})0001' 'GH%s@(000[2-9]|00[1-9][0-9]|0[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9])'
+  'gopro/modern/looping/hevc' 'GX([A-Z]{2})0001' 'GX%s@(000[2-9]|00[1-9][0-9]|0[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9])'
+
+)
+
+declare -- opt_dest_dir=
+declare -- opt_dest_dir_create='prompt'
+declare -- opt_output='%{name}-merged.mp4'
+declare -- opt_date_format='%Y-%m-%d_%H-%M-%S'
+declare -- opt_overwrite='prompt'
+declare -- opt_exec=1
+declare -- opt_exec_print='auto'
+# --- END config ---
+
+declare -- config_file="$config_dir"'/config.bash'
+test -f "$config_file" && source "$_"
+
+if [[ $opt_output =~ (^|[^\\])%\{?s ]]; then
+  printf '%s\n' 'Invalid configuration: variable opt_output uses the %{s} placeholder.' >&2
+  for (( i = 1; i <= $#; i++ )); do
+    case ${!i} in
+      --help | --version | --config ) function exit { (( ( ${1:-0} % 256 ) == 0 )) && command exit 1 || command exit "$1"; }; break ;;
+      -- ) exit 1 ;;
+    esac
+  done
+fi
+
+declare -- optdata__output__s="$opt_output"
+declare -- optdata__overwrite__n
+declare -- optdata__exec__n
+declare -- optdata__print_exec__flip
+
+while true; do
+  case $1 in
+    -d | --dest-dir ) opt_dest_dir="$2"; shift 2 ;;
+    --dest-dir-create ) opt_dest_dir_create="${2:-always}"; shift 2 ;;
+    --dest-dir-no-create ) opt_dest_dir_create='never'; shift ;;
+    -o | --output ) opt_output="$2"; shift 2 ;;
+    --date-format ) opt_date_format="$2"; shift 2 ;;
+    -y )
+      ((optdata__overwrite__n++))
+      case $optdata__overwrite__n in
+        1 ) opt_overwrite='prompt' ;;
+        2 ) opt_overwrite='always' ;;
+      esac
+      shift
+    ;;
+    --overwrite ) opt_overwrite="${2:-prompt}"; shift 2 ;;
+    -Y | --no-overwrite ) opt_overwrite='never'; shift ;;
+    -x )
+      opt_exec=1 
+      (( optdata__exec__n = (optdata__exec__n < 0 ? 0 : optdata__exec__n), optdata__exec__n++))
+      case $optdata__exec__n in
+        1 ) optdata__print_exec__flip= ;;
+        2 ) optdata__print_exec__flip=1 ;;
+      esac
+      shift
+    ;;
+    -X )
+      opt_exec= 
+      (( optdata__exec__n = (optdata__exec__n > 0 ? 0 : optdata__exec__n), optdata__exec__n--))
+      case $optdata__exec__n in
+        -1 ) optdata__print_exec__flip= ;;
+        -2 ) optdata__print_exec__flip=1 ;;
+      esac
+      shift
+    ;;
+    --exec ) opt_exec=1; shift ;;
+    --no-exec ) opt_exec=; shift ;;
+    --exec-print ) opt_exec_print="${2:-always}"; shift ;;
+    --exec-no-print ) opt_exec_print='never'; shift ;;
+    --help ) { test -f "$script_dir"'/man/man1/'"$script_name"'.1' || test -f "$(man -w "$script_name" &> /dev/null)"; } && man "$_"; exit ;;
+    --version ) printf '%s\n' "$version"; exit ;;
+    --config )
+      function ops_config_edit { "${VISUAL:-${EDITOR:-nano}}" "$config_file"; }
+      function ops_config_generate {
+        printf '%s\n' "Generating configuration file ${config_file@Q}:"
+        [[ ! -d $config_dir ]] && mkdir -p "$config_dir"
+        sed -En '
+          /^\s*#\s+---\s+BEGIN\s+config\s+---\s*$/ {
+            n
+            :a /^\s*#\s+---\s+END\s+config\s+---\s*$/ ! { H; n; b a }
+            z
+            x
+            s/^[\t\n\v\f\r ]*//
+            s/[\t\n\v\f\r ]*$//
+            s/[\t\v\f\r ]+$//gm
+            {
+              s/\x27/\x27\\\x27\x27/g
+              s/.*/printf \x27%s\x27 \x27&\x27 | sed -E \x27\/=\\($\/ { n; :a \/^\\)$\/ ! { s\/^\/#\/; n; b a } }\x27/e
+            }
+            s/^[^#]/#&/gm
+            p
+          }
+        ' "$script_source" | tee "$config_file" | bat_or_cat --style=grid,numbers --paging=never --language=bash --color=never &&
+        printf '%s\n' "Configuration file ${config_file@Q} successfully generated."
+      }
+      case ${2:-auto} in
+        edit ) [[ -f $config_file ]] && ops_config_edit || printf '%s\n' "No configuration file ${config_file@Q} to edit. Use --config=generate to generate it." >&2 ;;
+        generate )
+          if [[ -f $config_file ]]; then
+            while read -ep "Configuration file ${config_file@Q} already exists. Do you want to overwrite it? [y/N] "; do
+              case $REPLY in
+                [Yy] ) ops_config_generate; break ;;
+                [Nn] | '' ) exit 1 ;;
+              esac
+            done
+          else
+            ops_config_generate
+          fi
+        ;;
+        remove )
+          if [[ -f $config_file ]]; then
+            while read -ep "Are you sure you want to delete the configuration file ${config_file@Q}? [y/N] "; do
+              case $REPLY in
+                [Yy] ) rm -v "$config_file"; (shopt -s dotglob; set -- "$config_dir"'/'*; [[ $# -eq 0 ]]) && rmdir -v "$config_dir"; break ;;
+                [Nn] | '' ) exit 1 ;;
+              esac
+            done
+          else
+            printf '%s\n' "Configuration file ${config_file@Q} does not exist." >&2
+            exit 1
+          fi
+        ;;
+        auto )
+          if [[ -f $config_file ]]; then
+            ops_config_edit
+          else
+            ops_config_generate
+            while read -ep "Would you like to open it in a text editor? [Y/n] "; do
+              case $REPLY in
+                [Yy] | '' ) ops_config_edit; break ;;
+                [Nn] ) exit 1 ;;
+              esac
+            done
+          fi
+        ;;
+        * ) printf '%s\n' "Invalid argument to --config: ${2@Q}. Allowed values are 'edit', 'generate', 'remove', and 'auto'." >&2; exit 1 ;;
+      esac
+      exit
+    ;;
+    -- ) shift; break ;;
+    * ) printf '%s\n' "Internal error: unable to parse argument ${1@Q}." >&2; exit 1 ;;
+  esac
+done
+
+[[ $# -eq 0 ]] && set -- "${conf_default_nonopts[@]}"
+
+declare -A confdata__filename_spec__name_to_index
+declare -- i
+for (( i = 0; i < ${#conf_filename_spec[@]}; i = i + 3 )); do
+  confdata__filename_spec__name_to_index[${conf_filename_spec[$i]}]="$i"
+done
+unset -v i
+
+unset -v optdata__exec__n
+case $opt_exec_print in
+  always ) opt_exec_print=1 ;;
+  auto ) [[ ! $opt_exec ]] && opt_exec_print=1 || opt_exec_print= ;;
+  never ) opt_exec_print= ;;
+esac
+if [[ $optdata__print_exec__flip ]]; then
+  case $opt_exec_print in
+    1 ) opt_exec_print= ;;
+    '' ) opt_exec_print=1 ;;
+  esac
+fi
+unset -v optdata__print_exec__flip
+
+function ops_exec {
+  if [[ $opt_exec_print ]]; then
+    printf '%s' '$ '
+    print_quot "$@" | bat_or_cat --style=plain --paging=never --language=bash --color=never
+  fi
+  if [[ $opt_exec ]]; then "$@"; fi
+}
+
+case $opt_dest_dir_create in
+  always | prompt | never ) ;;
+  * ) printf '%s\n' "Invalid argument to --dest-dir-create or invalid configuration: ${opt_dest_dir_create@Q}. Allowed values are 'always', 'prompt', and 'never'." >&2; exit 1 ;;
+esac
+
+unset -v optdata__overwrite__n
+declare -a ffmpeg_opts
+case $opt_overwrite in
+  always ) ffmpeg_opts+=(-y) ;;
+  prompt ) ;;
+  never ) ffmpeg_opts+=(-n) ;;
+  * ) printf '%s\n' "Invalid argument to --overwrite or invalid configuration: ${opt_overwrite@Q}. Allowed values are 'always', 'prompt', and 'never'." >&2; exit 1 ;;
+esac
+
+if [[ ! $opt_exec ]]; then
+  printf '%s\n' 'Simulating.'
+fi
+
+if [[ $opt_dest_dir && ! -d $opt_dest_dir ]]; then
+  function create_dest_dir { ops_exec mkdir -p "$opt_dest_dir"; }
+  case $opt_dest_dir_create in
+    always ) create_dest_dir ;;
+    prompt )
+      while read -ep "Destination directory ${opt_dest_dir@Q} does not exist. Create it? [y/N] "; do
+        case $REPLY in
+          [Yy] ) create_dest_dir; break ;;
+          [Nn] | '' ) exit 1 ;;
+        esac
+      done
+    ;;
+    never ) printf '%s\n' "Destination directory ${opt_dest_dir@Q} does not exist." >&2; exit 1 ;;
+  esac
+  unset -f create_dest_dir
+fi
+
+function ops_format_path_to_part { realpath --relative-to "$dest_dir" -- "$1"; }
+function ops_get_creation_date { ffprobe -loglevel quiet "$1" -select_streams 0 -show_entries 'stream_tags=creation_time' -print_format 'default=noprint_wrappers=1:nokey=1'; }
+function ops_cleanup { ops_exec rm -- "$parts_list"; } 
+function ops_cancel { printf '%s\n' 'Operation canceled. Cleaning up.'; ops_cleanup; (( $(date -r "$output" '+%s') > output_date_before )) && ops_exec rm -- "$output"; exit 1; }
+
+declare -- nonopt
+
+for nonopt; do
+
+  declare -a files
+  [[ ! -d $nonopt ]] && files=("$nonopt") || files=("$nonopt"/**/*)
+
+  declare -- file
+
+  for file in "${files[@]}"; do
+
+    [[ -d $file ]] && continue
+
+    if
+
+      declare -- match_spec_name
+      for match_spec_name in "${!confdata__filename_spec__name_to_index[@]}"; do
+        declare -- match_spec_index="${confdata__filename_spec__name_to_index[$match_spec_name]}"
+        declare -- match_spec_re="${conf_filename_spec[$((match_spec_index + 1))]}"
+        [[ $file =~ ^((.*)/)?($match_spec_re\.MP4)$ ]] && break
+      done
+
+    then
+
+      declare -- match_spec_glob=$(printf "${conf_filename_spec[$((match_spec_index + 2))]}" "${BASH_REMATCH[4]}")
+
+      declare -- dest_dir="${opt_dest_dir:-${BASH_REMATCH[2]}}"
+
+      declare -a parts=("$(ops_format_path_to_part "$file")")
+      declare -- part
+      for part in "${BASH_REMATCH[2]}"'/'$match_spec_glob'.MP4'; do
+        parts+=("$(ops_format_path_to_part "$part")")
+      done
+      unset -v part
+
+      declare -- file_name="${BASH_REMATCH[3]%.MP4}" file_rec_id="${BASH_REMATCH[4]}"
+      declare -- file_creation_date=$(ops_get_creation_date "$file")
+
+      declare -- output=$(
+        fstr \
+          "$opt_output" \
+          name "$file_name" \
+          id "$file_rec_id" \
+          ${file_creation_date:+date "$(date -d "$file_creation_date" '+'"$opt_date_format")"} \
+          s "${optdata__output__s}"
+      )
+      if [[ $output =~ ^((.*)/)?(.*)$ ]]; then
+        test "${BASH_REMATCH[2]}" && ops_exec mkdir -p "$dest_dir"'/'"$_"
+      fi
+      output="$dest_dir"'/'"$output"
+      output="${output//+('/')/'/'}"
+
+      declare -- output_date_before
+      [[ -f $output ]] && output_date_before=$(date -r "$output" '+%s')
+
+      printf '%s\n' "Merging to ${output@Q}."
+      declare -- parts_list="$dest_dir"'/'"${BASH_REMATCH[3]}"'.txt'
+      parts_list="${parts_list//+('/')/'/'}"
+      if [[ -f $parts_list ]]; then
+        printf '%s\n' "Unable to create a temporary file ${parts_list@Q} because a file with that name already exists." >&2
+        exit 1
+      fi
+      unset -v dest_dir
+
+      printf '%s\n' "Creating a temporary file ${parts_list@Q}:"
+      printf 'file %s\n' "${parts[@]@Q}" |
+        ([[ $opt_exec ]] && tee "$parts_list" || cat) |
+        bat_or_cat --style=grid,numbers --paging=never --color=never
+      unset -v parts
+
+      trap 'ops_cancel' SIGINT
+      AV_LOG_FORCE_NOCOLOR=1 ops_exec ffmpeg \
+        -hide_banner -loglevel error \
+        -stats "${ffmpeg_opts[@]}" \
+        -f concat -safe 0 -i "$parts_list" \
+        -codec copy \
+        -map_metadata 0 -metadata 'creation_time='"$file_creation_date" \
+        "$output"
+      if [[ ! $opt_exec && -f $output ]]; then
+        printf '%s\n' "File ${output@Q} already exists."
+      fi
+      trap SIGINT
+
+      unset -v output output_date_before
+      unset -v file_name file_rec_id file_creation_date
+
+      ops_cleanup
+
+      unset -v parts_list
+      unset -v match_spec_glob
+
+    fi
+
+    unset -v match_spec_name match_spec_index match_spec_re
+
+  done
+
+  unset -v files file
+
+done
+
+unset -v nonopt
+
+unset -f ops_cleanup ops_cancel ops_format_path_to_part
+unset -v ffmpeg_opts
+
+if [[ ! $opt_exec ]]; then
+  printf '%s\n' 'Simulation complete.'
+fi
