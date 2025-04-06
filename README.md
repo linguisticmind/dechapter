@@ -16,6 +16,19 @@ Some cameras split their video recordings into chunks known as chapters to mitig
     </tr>
     <tr>
         <td>
+            <a href='https://github.com/linguisticmind/fstr/releases/tag/v0.1.1'>0.1.1</a>
+        </td>
+        <td>
+            2025-04-06
+        </td>
+        <td>
+            <p>
+                Placeholders: substitute <code>&lt;override&gt;</code> only when the replacement value is available.
+            </p>
+        </td>
+    </tr>
+    <tr>
+        <td>
             <a href='https://github.com/linguisticmind/dechapter/releases/tag/v0.1.0'>0.1.0</a>
         </td>
         <td>
@@ -492,7 +505,7 @@ COPYRIGHT
        This  is  free  software:  you  are free to change and redistribute it.
        There is NO WARRANTY, to the extent permitted by law.
 
-DECHAPTER 0.1.0                   2025-04-05                      DECHAPTER(1)
+DECHAPTER 0.1.1                   2025-04-06                      DECHAPTER(1)
 ```
 
 ## License
