@@ -4,6 +4,10 @@ Some cameras split their video recordings into chunks known as chapters to mitig
 
 `dechapter` is preconfigured to recognize recordings that follow the file naming conventions used by GoPro cameras. The user may also add their own filename patterns to accomodate other cameras and manufacturers.
 
+Video tutorial:
+
+[![Mindful Technology - dechapter: losslessly merge chaptered camera footage (e.g. GoPro)](https://img.youtube.com/vi/BoNp6jZkJnQ/0.jpg)](https://www.youtube.com/watch?v=BoNp6jZkJnQ)
+
 <a href='https://ko-fi.com/linguisticmind'><img src='https://github.com/linguisticmind/linguisticmind/raw/master/res/kofi/kofi_donate_1.svg' alt='Support me on Ko-fi' height='48'></a>
 
 ## Changelog
